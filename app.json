@@ -40,6 +40,9 @@
         }
       ]
     ],
+    "extra": {
+      "groqApiKey": ""
+    },
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true

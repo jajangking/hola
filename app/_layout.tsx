@@ -6,7 +6,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
-  anchor: '(tabs)',
+  initialRouteName: 'index',
 };
 
 export default function RootLayout() {
@@ -15,8 +15,29 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+        <Stack.Screen 
+          name="index" 
+          options={{ 
+            title: 'Hola AI',
+            headerStyle: {
+              backgroundColor: '#0a0a1a',
+            },
+            headerTintColor: '#00ff88',
+            headerTitleStyle: {
+              fontWeight: 'bold',
+            },
+          }} 
+        />
+        <Stack.Screen 
+          name="explore" 
+          options={{ 
+            title: 'Explore',
+            headerStyle: {
+              backgroundColor: '#0a0a1a',
+            },
+            headerTintColor: '#00ff88',
+          }} 
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
