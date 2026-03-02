@@ -1,16 +1,49 @@
-import React from 'react';
-import { View, ScrollView, StyleSheet, Switch, TouchableOpacity, Text } from 'react-native';
+import React, { useState } from 'react';
+import { View, ScrollView, StyleSheet, Switch, TouchableOpacity, Text, TextInput, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useAppSettings, AVAILABLE_MODELS, AVAILABLE_VOICES } from '@/hooks/useAppSettings';
+import { useAppSettings, AVAILABLE_MODELS } from '@/hooks/useAppSettings';
+import { getVoicesForProvider, AVAILABLE_TTS_PROVIDERS } from '@/services/ttsConfig';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface SettingsScreenProps {
   onGoBack: () => void;
 }
 
 export default function SettingsScreen({ onGoBack }: SettingsScreenProps) {
-  const { settings, updateSetting, resetSettings, status } = useAppSettings();
+  const { settings, updateSetting, resetSettings, resetTTSProvider, status } = useAppSettings();
+  const [groqApiKey, setGroqApiKey] = useState('');
+
+  const loadApiKeys = async () => {
+    try {
+      const groq = await AsyncStorage.getItem('@mochibot_groq_key');
+      setGroqApiKey(groq || '');
+    } catch (error) {
+      console.error('Error loading API keys:', error);
+    }
+  };
+
+  const saveApiKey = async (provider: 'groq', key: string) => {
+    try {
+      const storageKey = `@mochibot_${provider}_key`;
+      if (key.trim()) {
+        await AsyncStorage.setItem(storageKey, key.trim());
+        Alert.alert('Success', `${provider} API key saved!`);
+      } else {
+        await AsyncStorage.removeItem(storageKey);
+        Alert.alert('Success', `${provider} API key removed!`);
+      }
+      loadApiKeys();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save API key');
+      console.error('Error saving API key:', error);
+    }
+  };
+
+  React.useEffect(() => {
+    loadApiKeys();
+  }, []);
 
   const StatusBadge = ({ working }: { working: boolean }) => (
     <View style={[
@@ -48,9 +81,41 @@ export default function SettingsScreen({ onGoBack }: SettingsScreenProps) {
           </View>
 
           <View style={styles.setting}>
+            <ThemedText style={styles.settingLabel}>Provider: {settings.ttsProvider}</ThemedText>
+            <View style={styles.modelSelector}>
+              {AVAILABLE_TTS_PROVIDERS.map((provider) => (
+                <TouchableOpacity
+                  key={provider.id}
+                  style={[
+                    styles.modelButton,
+                    settings.ttsProvider === provider.id && styles.modelButtonActive,
+                  ]}
+                  onPress={() => updateSetting('ttsProvider', provider.id as any)}
+                >
+                  <Text style={[
+                    styles.modelButtonText,
+                    settings.ttsProvider === provider.id && styles.modelButtonTextActive,
+                  ]}>
+                    {provider.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity
+              style={styles.resetProviderButton}
+              onPress={async () => {
+                await resetTTSProvider();
+                Alert.alert('Success', 'TTS Provider reset to Groq!');
+              }}
+            >
+              <Text style={styles.resetProviderButtonText}>🔄 Reset to Groq</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.setting}>
             <ThemedText style={styles.settingLabel}>Voice</ThemedText>
             <View style={styles.voiceSelector}>
-              {AVAILABLE_VOICES.map((voice) => (
+              {getVoicesForProvider(settings.ttsProvider).map((voice) => (
                 <TouchableOpacity
                   key={voice.id}
                   style={[
@@ -63,7 +128,7 @@ export default function SettingsScreen({ onGoBack }: SettingsScreenProps) {
                     styles.voiceButtonText,
                     settings.ttsVoice === voice.id && styles.voiceButtonTextActive,
                   ]}>
-                    {voice.id}
+                    {voice.name}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -91,6 +156,32 @@ export default function SettingsScreen({ onGoBack }: SettingsScreenProps) {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+        </ThemedView>
+
+        {/* API Keys Settings */}
+        <ThemedView style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText type="subtitle" style={styles.sectionTitle}>🔑 API Keys</ThemedText>
+          </View>
+
+          <View style={styles.setting}>
+            <ThemedText style={styles.settingLabel}>Groq API Key</ThemedText>
+            <TextInput
+              style={styles.apiKeyInput}
+              value={groqApiKey}
+              onChangeText={setGroqApiKey}
+              placeholder="gsk_..."
+              placeholderTextColor="#666"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={() => saveApiKey('groq', groqApiKey)}
+            >
+              <Text style={styles.saveButtonText}>Save</Text>
+            </TouchableOpacity>
           </View>
         </ThemedView>
 
@@ -391,6 +482,44 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     color: '#0a0a1a',
     fontSize: 11,
+    fontWeight: '600',
+  },
+  apiKeyInput: {
+    backgroundColor: '#2a2a4e',
+    borderWidth: 1,
+    borderColor: '#3a3a5e',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#ffffff',
+    marginBottom: 10,
+  },
+  saveButton: {
+    backgroundColor: '#00ff88',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+  },
+  saveButtonText: {
+    color: '#0a0a1a',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  resetProviderButton: {
+    backgroundColor: '#00ff88',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 10,
+  },
+  resetProviderButtonText: {
+    color: '#0a0a1a',
+    fontSize: 14,
     fontWeight: '600',
   },
 });

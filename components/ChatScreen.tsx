@@ -1,16 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, FlatList, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, TouchableOpacity, Text } from 'react-native';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, TouchableOpacity, Text, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Audio } from 'expo-av';
 import MochibotFace from './MochibotFace';
 import { AnimatedChatBubble, TypingIndicator } from './AnimatedChatBubble';
 import { ChatInput } from './ChatInput';
 import { ThemedText } from './themed-text';
-import { ThemedView } from './themed-view';
-import { chatWithGroq, detectEmotionWithAI, ChatMessage as GroqMessage, MochibotState, EmotionResult, GroqOptions } from '@/services/groq';
-import { textToSpeech } from '@/services/tts';
+import { chatWithEmotion, ChatMessage as GroqMessage, MochibotState, detectEmotionFromText } from '@/services/groq';
+import { textToSpeech, stopSpeaking as stopTTS } from '@/services/tts';
 import { IconSymbol } from './ui/icon-symbol';
-import { useAppSettings } from '@/hooks/useAppSettings';
+import { useAppSettings, AppSettings } from '@/hooks/useAppSettings';
 import SettingsScreen from '@/app/settings';
 
 type MochibotStateType = MochibotState;
@@ -32,66 +30,58 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 ];
 
 export default function ChatScreen() {
-  const { settings } = useAppSettings();
+  const { settings, refreshSettings } = useAppSettings();
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [mochibotState, setMochibotState] = useState<MochibotStateType>('happy');
   const [primaryEmoji, setPrimaryEmoji] = useState('😄');
   const [secondaryEmoji, setSecondaryEmoji] = useState('✨');
   const [isTyping, setIsTyping] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [currentSound, setCurrentSound] = useState<Audio.Sound | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [ttsError, setTtsError] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Refresh settings when returning from settings screen
+  useEffect(() => {
+    if (!showSettings) {
+      refreshSettings();
+    }
+  }, [showSettings]);
+
+  // Log settings changes
+  useEffect(() => {
+    console.log('[ChatScreen] Settings changed:', settings);
+  }, [settings]);
 
   // Detect initial emotion on mount
   useEffect(() => {
-    detectEmotionWithAI(INITIAL_MESSAGES[0].text).then((result) => {
-      setMochibotState(result.emotion);
-      setPrimaryEmoji(result.primaryEmoji);
-      setSecondaryEmoji(result.secondaryEmoji || '');
-    });
+    const result = detectEmotionFromText(INITIAL_MESSAGES[0].text);
+    setMochibotState(result);
+    setPrimaryEmoji('😄');
+    setSecondaryEmoji('✨');
   }, []);
-
-  // Cleanup sound on unmount
-  useEffect(() => {
-    return () => {
-      if (currentSound) {
-        currentSound.unloadAsync();
-      }
-    };
-  }, [currentSound]);
 
   const speakResponse = async (text: string) => {
     if (!settings.ttsEnabled || isSpeaking) return;
 
     setIsSpeaking(true);
-    const sound = await textToSpeech({ 
-      text,
+    await textToSpeech({ 
+      text, 
+      provider: settings.ttsProvider,
       voice: settings.ttsVoice,
       speed: settings.ttsSpeed,
     });
+    setIsSpeaking(false);
+  };
 
-    if (sound) {
-      setCurrentSound(sound);
-
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          setIsSpeaking(false);
-          setCurrentSound(null);
-        }
-      });
-    } else {
-      setIsSpeaking(false);
-    }
+  const fixTTS = async () => {
+    setTtsError(false);
+    Alert.alert('TTS Info', 'Using Native TTS - Free, Offline, Bahasa Indonesia!');
   };
 
   const stopSpeaking = async () => {
-    if (currentSound) {
-      await currentSound.stopAsync();
-      await currentSound.unloadAsync();
-      setCurrentSound(null);
-      setIsSpeaking(false);
-    }
+    await stopTTS();
+    setIsSpeaking(false);
   };
 
   const scrollToBottom = () => {
@@ -127,28 +117,27 @@ export default function ChatScreen() {
       setMochibotState('thinking');
       setIsTyping(true);
 
-      chatWithGroq(groqMessages, {
+      chatWithEmotion(groqMessages, {
         model: settings.chatModel,
         temperature: settings.temperature,
-      }).then(async (response) => {
+      }).then((result) => {
         const botMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
-          text: response,
+          text: result.response,
           sender: 'bot',
           timestamp: new Date(),
         };
 
-        // Detect emotion from response using AI
-        const emotionResult: EmotionResult = await detectEmotionWithAI(response);
-        setMochibotState(emotionResult.emotion);
-        setPrimaryEmoji(emotionResult.primaryEmoji);
-        setSecondaryEmoji(emotionResult.secondaryEmoji || '');
+        // Use emotion from response
+        setMochibotState(result.emotion);
+        setPrimaryEmoji(result.primaryEmoji);
+        setSecondaryEmoji(result.secondaryEmoji || '');
 
         setMessages((prev) => [...prev, botMessage]);
         setIsTyping(false);
-        
+
         // Auto speak the response
-        speakResponse(response);
+        speakResponse(result.response);
       });
     }, 300);
   };
@@ -220,7 +209,11 @@ export default function ChatScreen() {
           
           {/* TTS Controls */}
           <View style={styles.ttsControls}>
-            {isSpeaking ? (
+            {ttsError ? (
+              <TouchableOpacity style={[styles.ttsButton, styles.ttsButtonError]} onPress={fixTTS}>
+                <Text style={styles.ttsButtonErrorText}>🔧 Fix TTS</Text>
+              </TouchableOpacity>
+            ) : isSpeaking ? (
               <TouchableOpacity style={styles.ttsButton} onPress={stopSpeaking}>
                 <IconSymbol name="stop.fill" size={20} color="#00ff88" />
                 <ThemedText style={styles.ttsButtonText}>Stop</ThemedText>
@@ -375,6 +368,15 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: 'rgba(0, 255, 136, 0.3)',
+  },
+  ttsButtonError: {
+    backgroundColor: 'rgba(255, 107, 107, 0.2)',
+    borderColor: 'rgba(255, 107, 107, 0.5)',
+  },
+  ttsButtonErrorText: {
+    color: '#ff6b6b',
+    fontSize: 14,
+    fontWeight: '600',
   },
   ttsButtonText: {
     fontSize: 14,

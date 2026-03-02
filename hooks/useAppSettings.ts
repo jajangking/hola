@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { TTSProvider, getVoicesForProvider } from '@/services/ttsConfig';
 
 export interface AppSettings {
   // TTS Settings
   ttsVoice: string;
   ttsSpeed: number;
   ttsEnabled: boolean;
+  ttsProvider: TTSProvider;
 
   // AI Settings
   chatModel: string;
@@ -28,12 +30,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ttsVoice: 'autumn',
   ttsSpeed: 1.0,
   ttsEnabled: true,
-  
+  ttsProvider: 'native',
+
   // AI
   chatModel: 'llama-3.3-70b-versatile',
   emotionModel: 'llama-3.1-8b-instant',
   temperature: 0.7,
-  
+
   // UI
   showSecondaryEmoji: true,
   emojiAlternateSpeed: 1500,
@@ -45,8 +48,13 @@ export const AVAILABLE_MODELS = [
   { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B (Fast)', provider: 'Meta' },
   { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B MoE', provider: 'Mistral' },
   { id: 'gemma2-9b-it', name: 'Gemma 2 9B', provider: 'Google' },
-  { id: 'gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'OpenAI' },
-  { id: 'gpt-oss-20b', name: 'GPT-OSS 20B (Fast)', provider: 'OpenAI' },
+  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'OpenAI' },
+  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B (Fast)', provider: 'OpenAI' },
+];
+
+export const AVAILABLE_TTS_PROVIDERS = [
+  { id: 'groq', name: '🤖 Groq (AI Voice)' },
+  { id: 'native', name: '📱 Native (Offline)' },
 ];
 
 export const AVAILABLE_VOICES = [
@@ -74,7 +82,15 @@ export function useAppSettings() {
       const stored = await AsyncStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+        const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        
+        // Auto-migrate old model IDs to new format
+        if (merged.chatModel === 'gpt-oss-120b') merged.chatModel = 'openai/gpt-oss-120b';
+        if (merged.chatModel === 'gpt-oss-20b') merged.chatModel = 'openai/gpt-oss-20b';
+        if (merged.emotionModel === 'gpt-oss-120b') merged.emotionModel = 'openai/gpt-oss-120b';
+        if (merged.emotionModel === 'gpt-oss-20b') merged.emotionModel = 'openai/gpt-oss-20b';
+        
+        setSettings(merged);
       }
       // Debug: Check AsyncStorage status
       setStatus({
@@ -95,6 +111,7 @@ export function useAppSettings() {
       const updated = { ...settings, ...newSettings };
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       setSettings(updated);
+      console.log('[Settings] Saved:', updated);
       return true;
     } catch (error) {
       console.error('Error saving settings:', error);
@@ -117,6 +134,20 @@ export function useAppSettings() {
     }
   };
 
+  const resetTTSProvider = async () => {
+    try {
+      await updateSetting('ttsProvider', 'groq');
+      return true;
+    } catch (error) {
+      console.error('Error resetting TTS provider:', error);
+      return false;
+    }
+  };
+
+  const refreshSettings = async () => {
+    await loadSettings();
+  };
+
   return {
     settings,
     isLoading,
@@ -124,5 +155,7 @@ export function useAppSettings() {
     saveSettings,
     updateSetting,
     resetSettings,
+    resetTTSProvider,
+    refreshSettings,
   };
 }

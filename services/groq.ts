@@ -32,12 +32,27 @@ const SYSTEM_PROMPT: ChatMessage = {
   content: `You are Mochibot, a friendly and helpful AI companion with a cute personality.
 You communicate in a warm, conversational tone.
 You can use emojis occasionally to express emotions.
-Keep responses concise and engaging (2-4 sentences typically).`,
+Keep responses concise and engaging (2-4 sentences typically).
+
+Respond in JSON format:
+{"response": "your message here", "emotion": "happy", "primaryEmoji": "😄", "secondaryEmoji": "✨"}`,
 };
 
-export async function chatWithGroq(messages: ChatMessage[], options?: GroqOptions): Promise<string> {
+export interface ChatWithEmotionResult {
+  response: string;
+  emotion: MochibotState;
+  primaryEmoji: string;
+  secondaryEmoji?: string;
+}
+
+export async function chatWithEmotion(messages: ChatMessage[], options?: GroqOptions): Promise<ChatWithEmotionResult> {
   if (!groq) {
-    return "⚠️ API key not configured. Please add EXPO_PUBLIC_GROQ_API_KEY to your .env file.";
+    return {
+      response: "⚠️ API key not configured. Please add EXPO_PUBLIC_GROQ_API_KEY to your .env file.",
+      emotion: 'idle',
+      primaryEmoji: '😐',
+      secondaryEmoji: '',
+    };
   }
 
   try {
@@ -52,21 +67,67 @@ export async function chatWithGroq(messages: ChatMessage[], options?: GroqOption
       stream: false,
     });
 
-    return completion.choices[0]?.message?.content || "Hmm, I seem to have lost my thoughts. Could you try again?";
+    let content = completion.choices[0]?.message?.content || "{}";
+
+    // Try to parse JSON response
+    let parsed: { response?: string; emotion?: string; primaryEmoji?: string; secondaryEmoji?: string } = {};
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      // If JSON parsing fails, use the content as plain response
+      parsed = { response: content };
+    }
+
+    const responseText = parsed.response || content;
+    const emotionResult = parsed.emotion ? {
+      emotion: (ALL_EMOTIONS.includes(parsed.emotion as MochibotState) ? parsed.emotion : 'idle') as MochibotState,
+      primaryEmoji: parsed.primaryEmoji || '😄',
+      secondaryEmoji: parsed.secondaryEmoji || '',
+    } : { emotion: detectEmotionFromText(responseText), primaryEmoji: '😄', secondaryEmoji: '' };
+
+    return {
+      response: responseText,
+      emotion: emotionResult.emotion,
+      primaryEmoji: emotionResult.primaryEmoji,
+      secondaryEmoji: emotionResult.secondaryEmoji,
+    };
   } catch (error) {
     console.error('Groq API Error:', error);
 
     if (error instanceof Error) {
       if (error.message.includes('API key')) {
-        return "Oops! My API key seems to be missing. Please ask the developer to add it.";
+        return {
+          response: "Oops! My API key seems to be missing. Please ask the developer to add it.",
+          emotion: 'idle',
+          primaryEmoji: '😐',
+          secondaryEmoji: '',
+        };
       }
       if (error.message.includes('rate limit')) {
-        return "I'm getting too many requests! Let me catch my breath and try again in a moment.";
+        return {
+          response: "I'm getting too many requests! Let me catch my breath and try again in a moment.",
+          emotion: 'idle',
+          primaryEmoji: '😐',
+          secondaryEmoji: '',
+        };
       }
     }
 
-    return "Sorry, I'm having trouble connecting right now. Please try again!";
+    return {
+      response: "Sorry, I'm having trouble connecting right now. Please try again!",
+      emotion: 'idle',
+      primaryEmoji: '😐',
+      secondaryEmoji: '',
+    };
   }
+}
+
+export async function chatWithGroq(messages: ChatMessage[], options?: GroqOptions): Promise<string> {
+  const result = await chatWithEmotion(messages, options);
+  return result.response;
 }
 
 export type MochibotState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'surprised' | 'love' | 'sleepy' | 'excited' | 'confused' | 'sad' | 'angry' | 'proud' | 'embarrassed' | 'disgusted' | 'scared' | 'grateful' | 'curious' | 'disappointed' | 'nervous' | 'custom';
