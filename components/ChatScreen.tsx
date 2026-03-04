@@ -1,14 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, TouchableOpacity, Text, Alert, BackHandler } from 'react-native';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, TouchableOpacity, Text, Alert, BackHandler, Keyboard, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MochibotFace from './MochibotFace';
 import { AnimatedChatBubble, TypingIndicator } from './AnimatedChatBubble';
 import { ChatInput } from './ChatInput';
-import { ThemedText } from './themed-text';
 import { chatWithEmotion, ChatMessage as GroqMessage, MochibotState, detectEmotionFromText } from '@/services/groq';
 import { textToSpeech, stopSpeaking as stopTTS } from '@/services/tts';
 import { IconSymbol } from './ui/icon-symbol';
-import { useAppSettings, AppSettings } from '@/hooks/useAppSettings';
+import * as Haptics from 'expo-haptics';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import SettingsScreen from '@/app/settings';
 import { analyzeAndLearn, loadUserMemory, type UserMemory } from '@/services/userMemory';
 import {
@@ -22,8 +22,6 @@ import {
   type ChatSession,
   type ChatMessage as HistoryMessage,
 } from '@/services/chatHistory';
-
-type MochibotStateType = MochibotState;
 
 interface ChatMessage {
   id: string;
@@ -44,18 +42,38 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 export default function ChatScreen() {
   const { settings, refreshSettings } = useAppSettings();
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [mochibotState, setMochibotState] = useState<MochibotStateType>('happy');
+  const [mochibotState, setMochibotState] = useState<MochibotState>('happy');
   const [primaryEmoji, setPrimaryEmoji] = useState('😄');
   const [secondaryEmoji, setSecondaryEmoji] = useState('✨');
   const [isTyping, setIsTyping] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
   const [ttsError, setTtsError] = useState(false);
   const [userMemory, setUserMemory] = useState<UserMemory | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Keyboard visibility listener
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const keyboardDidHideListener = Keyboard.addListener(
+      'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
+  }, []);
 
   // Load user memory and current session on mount
   useEffect(() => {
@@ -77,7 +95,6 @@ export default function ChatScreen() {
       if (sessionId) {
         const session = await getSessionById(sessionId);
         if (session && session.messages.length > 0) {
-          // Convert history messages to chat messages
           const convertedMessages: ChatMessage[] = session.messages.map((m) => ({
             id: m.id,
             text: m.text,
@@ -89,7 +106,6 @@ export default function ChatScreen() {
           return;
         }
       }
-      // Create new session if no existing one
       const newSession = await createSession();
       setCurrentSessionId(newSession.id);
     } catch (error) {
@@ -100,37 +116,40 @@ export default function ChatScreen() {
   // Save messages to session
   const saveCurrentSession = async (msgs: ChatMessage[]) => {
     if (!currentSessionId) return;
-    
+
     const historyMessages: HistoryMessage[] = msgs.map((m) => ({
       id: m.id,
       text: m.text,
       sender: m.sender,
       timestamp: m.timestamp.getTime(),
     }));
-    
+
     await saveSessionMessages(currentSessionId, historyMessages);
   };
 
   // Handle Android hardware back button
   useEffect(() => {
     const onBackPress = () => {
-      if (showSettings) {
-        setShowSettings(false);
-        return true; // Prevent default back behavior (exiting app)
+      if (showSettings || showHistory || showSidebar) {
+        if (showSettings) setShowSettings(false);
+        if (showHistory) setShowHistory(false);
+        if (showSidebar) setShowSidebar(false);
+        return true;
       }
-      return false; // Allow default behavior (exit app from chat)
+      return false;
     };
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => subscription.remove();
-  }, [showSettings]);
+  }, [showSettings, showHistory, showSidebar]);
 
   // Refresh settings when returning from settings screen
   useEffect(() => {
-    if (!showSettings) {
+    if (!showSettings && !showHistory && !showSidebar) {
       refreshSettings();
     }
-  }, [showSettings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSettings, showHistory, showSidebar]);
 
   // Log settings changes
   useEffect(() => {
@@ -149,8 +168,8 @@ export default function ChatScreen() {
     if (!settings.ttsEnabled || isSpeaking) return;
 
     setIsSpeaking(true);
-    await textToSpeech({ 
-      text, 
+    await textToSpeech({
+      text,
       provider: settings.ttsProvider,
       voice: settings.ttsVoice,
       speed: settings.ttsSpeed,
@@ -176,7 +195,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isTyping]);
+  }, [messages, isTyping, keyboardVisible]);
 
   const handleSendMessage = (text: string) => {
     const userMessage: ChatMessage = {
@@ -190,14 +209,11 @@ export default function ChatScreen() {
     setMessages(updatedMessages);
     setMochibotState('listening');
 
-    // Convert FULL conversation history to Groq message format
-    // This gives AI full context of the conversation
     const groqMessages: GroqMessage[] = updatedMessages.map((msg) => ({
       role: msg.sender === 'user' ? 'user' : 'assistant',
       content: msg.text,
     }));
 
-    // Call Groq API with full context
     setTimeout(() => {
       setMochibotState('thinking');
       setIsTyping(true);
@@ -205,7 +221,7 @@ export default function ChatScreen() {
       chatWithEmotion(groqMessages, {
         model: settings.chatModel,
         temperature: settings.temperature,
-        useMemory: true, // Enable personalized responses based on user memory
+        useMemory: true,
       }).then((result) => {
         const botMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
@@ -214,7 +230,6 @@ export default function ChatScreen() {
           timestamp: new Date(),
         };
 
-        // Use emotion from response
         setMochibotState(result.emotion);
         setPrimaryEmoji(result.primaryEmoji);
         setSecondaryEmoji(result.secondaryEmoji || '');
@@ -223,21 +238,24 @@ export default function ChatScreen() {
         setMessages(finalMessages);
         setIsTyping(false);
 
-        // Save to chat history
         saveCurrentSession(finalMessages);
 
-        // Auto-learning: Analyze conversation and update memory
-        analyzeAndLearn(text, result.response).then(async () => {
-          // Reload memory after learning and log it
-          const updatedMemory = await loadUserMemory();
-          setUserMemory(updatedMemory);
-          console.log('[ChatScreen] Memory updated:', JSON.stringify(updatedMemory, null, 2));
+        analyzeAndLearn(text, result.response).then(() => {
+          loadUserMemory().then(setUserMemory);
         });
 
-        // Auto speak the response
         speakResponse(result.response);
       });
     }, 300);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadCurrentSession();
+    if (userMemory) {
+      await loadUserMemory().then(setUserMemory);
+    }
+    setRefreshing(false);
   };
 
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => (
@@ -248,63 +266,42 @@ export default function ChatScreen() {
     />
   );
 
-  const statusBadge = (
-    <View style={styles.statusBadge}>
-      <View style={[styles.statusDot, getStatusColor(mochibotState)]} />
-      <ThemedText style={styles.statusText}>
-        {mochibotState === 'listening' && 'Listening'}
-        {mochibotState === 'thinking' && 'Thinking'}
-        {mochibotState === 'speaking' && 'Speaking'}
-        {mochibotState === 'happy' && 'Happy'}
-        {mochibotState === 'surprised' && 'Surprised'}
-        {mochibotState === 'love' && 'Love'}
-        {mochibotState === 'sleepy' && 'Sleepy'}
-        {mochibotState === 'excited' && 'Excited'}
-        {mochibotState === 'confused' && 'Confused'}
-        {mochibotState === 'sad' && 'Sad'}
-        {mochibotState === 'angry' && 'Angry'}
-        {mochibotState === 'proud' && 'Proud'}
-        {mochibotState === 'embarrassed' && 'Embarrassed'}
-        {mochibotState === 'disgusted' && 'Disgusted'}
-        {mochibotState === 'scared' && 'Scared'}
-        {mochibotState === 'grateful' && 'Grateful'}
-        {mochibotState === 'curious' && 'Curious'}
-        {mochibotState === 'disappointed' && 'Disappointed'}
-        {mochibotState === 'nervous' && 'Nervous'}
-        {mochibotState === 'custom' && `Custom: ${primaryEmoji}`}
-        {mochibotState === 'idle' && 'Online'}
-      </ThemedText>
-    </View>
-  );
-
   if (showSettings) {
-    return <SettingsScreen onGoBack={() => setShowSettings(false)} initialMemory={userMemory} />;
+    return <SettingsScreen onGoBack={() => { setShowSettings(false); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} initialMemory={userMemory} />;
   }
 
-  // Show chat history screen
   if (showHistory) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
         <View style={styles.historyContainer}>
           <View style={styles.historyHeader}>
-            <ThemedText type="title" style={styles.historyTitle}>📚 Chat History</ThemedText>
+            <View>
+              <Text style={styles.historyTitle}>📚 Chat History</Text>
+              <Text style={styles.historySubtitle}>{chatSessions.length} conversations</Text>
+            </View>
             <TouchableOpacity
               style={styles.newChatButton}
               onPress={async () => {
+                await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setShowHistory(false);
                 const newSession = await createSession();
                 setCurrentSessionId(newSession.id);
                 setMessages(INITIAL_MESSAGES);
               }}
             >
-              <Text style={styles.newChatButtonText}>➕ New Chat</Text>
+              <IconSymbol name="add" size={22} color="#0a0a1a" />
+              <Text style={styles.newChatButtonText}>New Chat</Text>
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.historyList}>
+          <ScrollView style={styles.historyList} refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#00ff88" />
+          }>
             {chatSessions.length === 0 ? (
               <View style={styles.emptyHistory}>
-                <ThemedText style={styles.emptyHistoryText}>No chat history yet</ThemedText>
+                <IconSymbol name="chat" size={48} color="#444" />
+                <Text style={styles.emptyHistoryText}>No conversations yet</Text>
+                <Text style={styles.emptyHistorySubtext}>Start chatting to create your first conversation!</Text>
               </View>
             ) : (
               chatSessions.map((session) => (
@@ -315,6 +312,7 @@ export default function ChatScreen() {
                     currentSessionId === session.id && styles.historyItemActive,
                   ]}
                   onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     const loadedSession = await getSessionById(session.id);
                     if (loadedSession) {
                       const convertedMessages: ChatMessage[] = loadedSession.messages.map((m) => ({
@@ -329,6 +327,9 @@ export default function ChatScreen() {
                     }
                   }}
                 >
+                  <View style={styles.historyItemIcon}>
+                    <IconSymbol name="chat" size={26} color={currentSessionId === session.id ? '#00ff88' : '#4ECDC4'} />
+                  </View>
                   <View style={styles.historyItemContent}>
                     <Text style={styles.historyItemTitle} numberOfLines={1}>
                       {session.title}
@@ -357,7 +358,7 @@ export default function ChatScreen() {
                         );
                       }}
                     >
-                      <Text style={styles.regenerateTitleButtonText}>🔄</Text>
+                      <IconSymbol name="refresh" size={20} color="#0a0a1a" />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.deleteSessionButton}
@@ -383,7 +384,7 @@ export default function ChatScreen() {
                         );
                       }}
                     >
-                      <Text style={styles.deleteSessionButtonText}>🗑️</Text>
+                      <IconSymbol name="delete" size={20} color="#0a0a1a" />
                     </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
@@ -393,9 +394,13 @@ export default function ChatScreen() {
 
           <TouchableOpacity
             style={styles.backToChatButton}
-            onPress={() => setShowHistory(false)}
+            onPress={async () => {
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShowHistory(false);
+            }}
           >
-            <ThemedText style={styles.backToChatButtonText}>← Back to Chat</ThemedText>
+            <IconSymbol name="arrow-back" size={22} color="#0a0a1a" />
+            <Text style={styles.backToChatButtonText}>Back to Chat</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -407,92 +412,185 @@ export default function ChatScreen() {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
       >
-        {/* Header Buttons */}
-        <View style={styles.headerButtons}>
+        {/* Top Bar - Menu Button */}
+        <View style={styles.topBar}>
           <TouchableOpacity
-            style={styles.historyButton}
-            onPress={() => setShowHistory(true)}
+            style={styles.menuButton}
+            onPress={async () => {
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShowSidebar(true);
+            }}
           >
-            <Text style={styles.historyButtonText}>📚</Text>
+            <IconSymbol name="menu" size={28} color="#00ff88" />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.settingsButton}
-            onPress={() => setShowSettings(true)}
-          >
-            <Text style={styles.settingsButtonText}>⚙️</Text>
-          </TouchableOpacity>
+          <Text style={styles.topBarTitle}>Mochibot</Text>
+          <View style={styles.topBarSpacer} />
         </View>
 
-        {/* Face Section - Always visible at top */}
-        <View style={styles.faceSection}>
+        {/* Sidebar - Left Side */}
+        {showSidebar && (
+          <>
+            <TouchableOpacity
+              style={styles.sidebarOverlay}
+              activeOpacity={0.5}
+              onPress={async () => {
+                await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setShowSidebar(false);
+              }}
+            />
+            <View style={styles.sidebar}>
+              <View style={styles.sidebarHeader}>
+                <Text style={styles.sidebarTitle}>Menu</Text>
+                <TouchableOpacity
+                  style={styles.closeSidebarButton}
+                  onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowSidebar(false);
+                  }}
+                >
+                  <IconSymbol name="close" size={24} color="#888" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.sidebarContent} showsVerticalScrollIndicator={false}>
+                <TouchableOpacity
+                  style={styles.sidebarItem}
+                  onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowSidebar(false);
+                    handleSendMessage("/help");
+                  }}
+                >
+                  <IconSymbol name="help-outline" size={24} color="#4ECDC4" />
+                  <Text style={styles.sidebarItemText}>Help</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.sidebarItem}
+                  onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowSidebar(false);
+                    handleSendMessage("/memory");
+                  }}
+                >
+                  <IconSymbol name="favorite" size={24} color="#FFD700" />
+                  <Text style={styles.sidebarItemText}>Memory</Text>
+                </TouchableOpacity>
+
+                <View style={styles.sidebarDivider} />
+
+                <TouchableOpacity
+                  style={styles.sidebarItem}
+                  onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowSidebar(false);
+                    const newSession = await createSession();
+                    setCurrentSessionId(newSession.id);
+                    setMessages(INITIAL_MESSAGES);
+                  }}
+                >
+                  <IconSymbol name="add-circle-outline" size={24} color="#ff6b6b" />
+                  <Text style={styles.sidebarItemText}>New Chat</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.sidebarItem}
+                  onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowSidebar(false);
+                    setShowHistory(true);
+                  }}
+                >
+                  <IconSymbol name="history" size={24} color="#9B59B6" />
+                  <Text style={styles.sidebarItemText}>Chat History</Text>
+                </TouchableOpacity>
+
+                <View style={styles.sidebarDivider} />
+
+                <TouchableOpacity
+                  style={styles.sidebarItem}
+                  onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowSidebar(false);
+                    setShowSettings(true);
+                  }}
+                >
+                  <IconSymbol name="settings" size={24} color="#E74C3C" />
+                  <Text style={styles.sidebarItemText}>Settings</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </>
+        )}
+
+        {/* Emoticon Section - Fixed at top */}
+        <View style={styles.emoticonSection}>
           <MochibotFace
             state={mochibotState}
             primaryEmoji={primaryEmoji}
             secondaryEmoji={secondaryEmoji}
           />
-          {statusBadge}
-          
-          {/* Memory Status */}
-          {userMemory && userMemory.personalFacts.length > 0 && (
-            <TouchableOpacity
-              style={styles.memoryBadge}
-              onPress={() => {
-                Alert.alert(
-                  '🧠 Memory Info',
-                  `Saya menyimpan ${userMemory.personalFacts.length} fakta tentang user:\n\n${userMemory.personalFacts.slice(0, 5).map(f => `• ${f.fact}`).join('\n')}${userMemory.personalFacts.length > 5 ? '\n...dan lainnya' : ''}`,
-                  [{ text: 'OK' }]
-                );
-              }}
-            >
-              <Text style={styles.memoryBadgeText}>🧠 {userMemory.personalFacts.length} facts</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* TTS Controls */}
           <View style={styles.ttsControls}>
-            {ttsError ? (
-              <TouchableOpacity style={[styles.ttsButton, styles.ttsButtonError]} onPress={fixTTS}>
-                <Text style={styles.ttsButtonErrorText}>🔧 Fix TTS</Text>
-              </TouchableOpacity>
-            ) : isSpeaking ? (
-              <TouchableOpacity style={styles.ttsButton} onPress={stopSpeaking}>
-                <IconSymbol name="stop.fill" size={20} color="#00ff88" />
-                <ThemedText style={styles.ttsButtonText}>Stop</ThemedText>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity 
-                style={styles.ttsButton} 
-                onPress={() => {
+            {!ttsError && !isSpeaking ? (
+              <TouchableOpacity
+                style={styles.ttsButton}
+                onPress={async () => {
+                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   const lastBotMessage = messages.filter(m => m.sender === 'bot').pop();
-                  if (lastBotMessage) {
-                    speakResponse(lastBotMessage.text);
-                  }
+                  if (lastBotMessage) speakResponse(lastBotMessage.text);
                 }}
               >
-                <IconSymbol name="play.fill" size={20} color="#00ff88" />
-                <ThemedText style={styles.ttsButtonText}>Speak</ThemedText>
+                <IconSymbol name="volume-up" size={18} color="#00ff88" />
+                <Text style={styles.ttsButtonText}>Speak</Text>
+              </TouchableOpacity>
+            ) : isSpeaking ? (
+              <TouchableOpacity
+                style={styles.ttsButtonActive}
+                onPress={async () => {
+                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  await stopSpeaking();
+                }}
+              >
+                <IconSymbol name="stop-circle" size={18} color="#ff6b6b" />
+                <Text style={styles.ttsButtonTextActive}>Stop</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {ttsError && (
+              <TouchableOpacity
+                style={styles.ttsButtonError}
+                onPress={fixTTS}
+              >
+                <IconSymbol name="error-outline" size={18} color="#ff6b6b" />
+                <Text style={styles.ttsButtonTextError}>Fix TTS</Text>
               </TouchableOpacity>
             )}
           </View>
-          
-          {isTyping && (
-            <View style={styles.typingBadge}>
-              <ActivityIndicator size="small" color="#00ff88" />
-              <ThemedText style={styles.typingText}>Typing</ThemedText>
-            </View>
-          )}
         </View>
 
-        {/* Chat Messages - Scrollable area */}
+        {/* Chat Messages - Scrollable Column */}
         <ScrollView
           ref={scrollViewRef}
           style={styles.messagesSection}
           contentContainerStyle={styles.messagesContent}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={scrollToBottom}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
         >
+          {/* Typing Indicator */}
+          {isTyping && (
+            <View style={styles.typingContainer}>
+              <View style={styles.typingBubble}>
+                <ActivityIndicator size="small" color="#00ff88" />
+                <Text style={styles.typingText}>Mochibot is thinking...</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Chat Messages */}
           {messages.map((msg, index) => (
             <React.Fragment key={msg.id}>
               {renderMessage({ item: msg, index })}
@@ -502,38 +600,11 @@ export default function ChatScreen() {
           <View style={styles.messagesSpacer} />
         </ScrollView>
 
-        {/* Input Section */}
+        {/* Input */}
         <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
-}
-
-function getStatusColor(state: MochibotStateType) {
-  const colors: Record<MochibotStateType, string> = {
-    idle: '#888888',
-    listening: '#45B7D1',
-    thinking: '#4ECDC4',
-    speaking: '#96CEB4',
-    happy: '#FFD700',
-    surprised: '#FF6B6B',
-    love: '#FF69B4',
-    sleepy: '#9B59B6',
-    excited: '#F39C12',
-    confused: '#E74C3C',
-    sad: '#5DADE2',
-    angry: '#E74C3C',
-    proud: '#FFA500',
-    embarrassed: '#FFB6C1',
-    disgusted: '#9ACD32',
-    scared: '#8B008B',
-    grateful: '#FF69B4',
-    curious: '#20B2AA',
-    disappointed: '#708090',
-    nervous: '#FFA07A',
-    custom: '#00ff88',
-  };
-  return { backgroundColor: colors[state] || '#888888' };
 }
 
 const styles = StyleSheet.create({
@@ -543,152 +614,228 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    position: 'relative',
   },
-  settingsButton: {
-    position: 'absolute',
-    top: 10,
-    right: 16,
-    zIndex: 100,
-    backgroundColor: '#1a1a2e',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2a2a4e',
-  },
-  settingsButtonText: {
-    fontSize: 20,
-  },
-  faceSection: {
+  // Top Bar - Menu Button
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
     backgroundColor: '#0a0a1a',
-    paddingTop: 20,
-    paddingBottom: 15,
-    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a2e',
   },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 255, 136, 0.1)',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 255, 136, 0.2)',
+  menuButton: {
+    padding: 4,
   },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  statusText: {
-    fontSize: 13,
+  topBarTitle: {
+    fontSize: 18,
+    fontWeight: '700',
     color: '#00ff88',
-    fontWeight: '500',
   },
-  typingBadge: {
+  topBarSpacer: {
+    width: 36,
+  },
+  // Sidebar
+  sidebarOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    zIndex: 998,
+  },
+  sidebar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 280,
+    backgroundColor: '#1a1a2e',
+    zIndex: 999,
+    borderRightWidth: 1,
+    borderRightColor: '#2a2a4e',
+  },
+  sidebarHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    gap: 4,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a4e',
   },
-  typingText: {
-    fontSize: 12,
-    color: '#888888',
+  sidebarTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#fff',
   },
+  closeSidebarButton: {
+    padding: 4,
+  },
+  sidebarContent: {
+    flex: 1,
+    paddingTop: 8,
+  },
+  sidebarItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  sidebarItemText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#fff',
+  },
+  sidebarDivider: {
+    height: 1,
+    backgroundColor: '#2a2a4e',
+    marginVertical: 8,
+  },
+  // Emoticon Section - Fixed
+  emoticonSection: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    backgroundColor: '#0a0a1a',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a2e',
+  },
+  // TTS Controls - Compact
   ttsControls: {
-    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
   },
   ttsButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 255, 136, 0.15)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 8,
+    gap: 4,
+    backgroundColor: 'rgba(0, 255, 136, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(0, 255, 136, 0.3)',
   },
-  ttsButtonError: {
-    backgroundColor: 'rgba(255, 107, 107, 0.2)',
-    borderColor: 'rgba(255, 107, 107, 0.5)',
-  },
-  ttsButtonErrorText: {
-    color: '#ff6b6b',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   ttsButtonText: {
-    fontSize: 14,
-    color: '#00ff88',
+    fontSize: 12,
     fontWeight: '600',
+    color: '#00ff88',
   },
+  ttsButtonActive: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 107, 107, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 107, 0.3)',
+  },
+  ttsButtonTextActive: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ff6b6b',
+  },
+  ttsButtonError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 107, 107, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 107, 0.3)',
+  },
+  ttsButtonTextError: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ff6b6b',
+  },
+  // Typing Indicator
+  typingContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  typingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1a1a2e',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#2a2a4e',
+  },
+  typingText: {
+    fontSize: 12,
+    color: '#888',
+  },
+  // Messages
   messagesSection: {
     flex: 1,
   },
   messagesContent: {
-    paddingHorizontal: 8,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    paddingBottom: 100,
   },
   messagesSpacer: {
-    height: 10,
+    height: 8,
   },
-  headerButtons: {
-    flexDirection: 'row',
-    position: 'absolute',
-    top: 10,
-    right: 16,
-    zIndex: 100,
-    gap: 10,
-  },
-  historyButton: {
-    backgroundColor: '#1a1a2e',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2a2a4e',
-  },
-  historyButtonText: {
-    fontSize: 20,
-  },
-  settingsButton: {
-    backgroundColor: '#1a1a2e',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2a2a4e',
-  },
-  settingsButtonText: {
-    fontSize: 20,
-  },
+  // History Screen
   historyContainer: {
     flex: 1,
-    padding: 20,
+    padding: 16,
   },
   historyHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a2e',
   },
   historyTitle: {
+    fontSize: 24,
+    fontWeight: '700',
     color: '#00ff88',
   },
+  historySubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
   newChatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     backgroundColor: '#00ff88',
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    shadowColor: '#00ff88',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   newChatButtonText: {
     color: '#0a0a1a',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   historyList: {
     flex: 1,
@@ -696,10 +843,10 @@ const styles = StyleSheet.create({
   historyItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: 14,
     backgroundColor: '#1a1a2e',
-    marginBottom: 12,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: '#2a2a4e',
   },
@@ -707,75 +854,83 @@ const styles = StyleSheet.create({
     borderColor: '#00ff88',
     backgroundColor: '#1a1a3e',
   },
+  historyItemIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: 'rgba(78, 205, 196, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
   historyItemContent: {
     flex: 1,
   },
   historyItemTitle: {
     fontSize: 15,
-    color: '#ffffff',
+    color: '#fff',
     fontWeight: '600',
     marginBottom: 4,
   },
   historyItemMeta: {
     fontSize: 12,
-    color: '#888888',
+    color: '#666',
   },
   historyItemActions: {
     flexDirection: 'row',
     gap: 8,
   },
   regenerateTitleButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: '#4ECDC4',
-  },
-  regenerateTitleButtonText: {
-    fontSize: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   deleteSessionButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: '#ff6b6b',
-  },
-  deleteSessionButtonText: {
-    fontSize: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyHistory: {
-    padding: 40,
+    padding: 60,
     alignItems: 'center',
     justifyContent: 'center',
   },
   emptyHistoryText: {
-    fontSize: 14,
-    color: '#888888',
+    fontSize: 16,
+    color: '#666',
     textAlign: 'center',
+    marginTop: 16,
+  },
+  emptyHistorySubtext: {
+    fontSize: 14,
+    color: '#444',
+    textAlign: 'center',
+    marginTop: 8,
   },
   backToChatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     padding: 16,
     borderRadius: 12,
     backgroundColor: '#00ff88',
-    alignItems: 'center',
     marginTop: 16,
+    shadowColor: '#00ff88',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   backToChatButtonText: {
     color: '#0a0a1a',
     fontSize: 15,
-    fontWeight: '600',
-  },
-  memoryBadge: {
-    marginTop: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: 'rgba(78, 205, 196, 0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(78, 205, 196, 0.5)',
-  },
-  memoryBadgeText: {
-    fontSize: 12,
-    color: '#4ECDC4',
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });

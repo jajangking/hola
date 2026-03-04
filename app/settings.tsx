@@ -16,7 +16,6 @@ import {
   addPersonalityTrait,
   type UserMemory,
   type PersonalFact,
-  saveUserMemory,
 } from '@/services/userMemory';
 
 interface SettingsScreenProps {
@@ -53,8 +52,8 @@ export default function SettingsScreen({ onGoBack, initialMemory }: SettingsScre
     try {
       const groq = await AsyncStorage.getItem('@mochibot_groq_key');
       setGroqApiKey(groq || '');
-    } catch (error) {
-      console.error('Error loading API keys:', error);
+    } catch {
+      console.error('Error loading API keys');
     }
   };
 
@@ -84,8 +83,8 @@ export default function SettingsScreen({ onGoBack, initialMemory }: SettingsScre
     try {
       const memory = await loadUserMemory();
       setUserMemory(memory);
-    } catch (error) {
-      console.error('Error loading user memory:', error);
+    } catch {
+      console.error('Error loading user memory');
       Alert.alert('Error', 'Failed to load user memory');
     } finally {
       setMemoryLoading(false);
@@ -103,7 +102,7 @@ export default function SettingsScreen({ onGoBack, initialMemory }: SettingsScre
       console.log('=== USER MEMORY EXPORT ===');
       console.log(exported);
       console.log('==========================');
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to export memory');
     }
   };
@@ -122,7 +121,7 @@ export default function SettingsScreen({ onGoBack, initialMemory }: SettingsScre
               await clearUserMemory();
               setUserMemory(null);
               Alert.alert('Success', 'All memory has been cleared');
-            } catch (error) {
+            } catch {
               Alert.alert('Error', 'Failed to clear memory');
             }
           },
@@ -136,7 +135,7 @@ export default function SettingsScreen({ onGoBack, initialMemory }: SettingsScre
       await removePersonalFact(factId);
       loadUserMemoryData(); // Refresh
       Alert.alert('Success', 'Fact removed');
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to remove fact');
     }
   };
@@ -178,7 +177,7 @@ export default function SettingsScreen({ onGoBack, initialMemory }: SettingsScre
     try {
       await AsyncStorage.setItem('@mochibot_bot_name', botName.trim());
       Alert.alert('Success', `Bot name changed to ${botName}!`);
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to save bot name');
     }
   };
@@ -187,8 +186,8 @@ export default function SettingsScreen({ onGoBack, initialMemory }: SettingsScre
     try {
       const name = await AsyncStorage.getItem('@mochibot_bot_name');
       if (name) setBotName(name);
-    } catch (error) {
-      console.error('Error loading bot name:', error);
+    } catch {
+      console.error('Error loading bot name');
     }
   };
 

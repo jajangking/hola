@@ -10,7 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 const { width } = Dimensions.get('window');
-const FACE_SIZE = Math.min(width * 0.55, 220);
+const FACE_SIZE = Math.min(width * 0.42, 140);
 
 type MochibotState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'surprised' | 'love' | 'sleepy' | 'excited' | 'confused' | 'sad' | 'angry' | 'proud' | 'embarrassed' | 'disgusted' | 'scared' | 'grateful' | 'curious' | 'disappointed' | 'nervous' | 'custom';
 
@@ -20,18 +20,18 @@ interface MochibotFaceProps {
   secondaryEmoji?: string;
 }
 
-export default function MochibotFace({ 
-  state = 'idle', 
+export default function MochibotFace({
+  state = 'idle',
   primaryEmoji = '😐',
   secondaryEmoji = ''
 }: MochibotFaceProps) {
   const showSecondary = useSharedValue(0);
   const emojiOpacity = useSharedValue(1);
+  const glowIntensity = useSharedValue(0.4);
 
   // Alternate between primary and secondary emoji if both exist
   useEffect(() => {
     if (secondaryEmoji && secondaryEmoji !== '') {
-      // Alternate every 1.5 seconds
       const interval = setInterval(() => {
         showSecondary.value = showSecondary.value === 0 ? 1 : 0;
       }, 1500);
@@ -39,18 +39,33 @@ export default function MochibotFace({
     } else {
       showSecondary.value = 0;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [secondaryEmoji]);
 
   // Smooth breathing animation
   useEffect(() => {
     emojiOpacity.value = withRepeat(
       withSequence(
-        withTiming(0.85, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
-        withTiming(1, { duration: 1000, easing: Easing.inOut(Easing.ease) })
+        withTiming(0.85, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 1200, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
       true
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Subtle glow pulse
+  useEffect(() => {
+    glowIntensity.value = withRepeat(
+      withSequence(
+        withTiming(0.3, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.5, { duration: 1500, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      true
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const emojiStyle = useAnimatedStyle(() => ({
@@ -62,10 +77,14 @@ export default function MochibotFace({
     transform: [{ scale: showSecondary.value }],
   }));
 
+  const glowStyle = useAnimatedStyle(() => ({
+    shadowOpacity: glowIntensity.value,
+  }));
+
   return (
     <View style={styles.container}>
       <View style={styles.faceContainer}>
-        <View style={styles.face}>
+        <Animated.View style={[styles.face, glowStyle]}>
           <Animated.View style={[styles.emojiContainer, emojiStyle]}>
             <Text style={styles.emoticon}>{primaryEmoji}</Text>
             {secondaryEmoji !== '' && (
@@ -74,12 +93,13 @@ export default function MochibotFace({
               </Animated.View>
             )}
           </Animated.View>
-        </View>
+        </Animated.View>
       </View>
-      
+
       {/* State indicator */}
       <View style={styles.stateIndicator}>
         <View style={[styles.stateDot, getStateColor(state)]} />
+        <Text style={styles.stateLabel}>{state}</Text>
       </View>
     </View>
   );
@@ -115,7 +135,7 @@ function getStateColor(state: MochibotState) {
 const styles = StyleSheet.create({
   container: {
     width: FACE_SIZE,
-    height: FACE_SIZE + 30,
+    height: FACE_SIZE + 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -132,13 +152,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a2e',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 3,
+    borderWidth: 2.5,
     borderColor: '#00ff88',
     shadowColor: '#00ff88',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 10,
+    shadowRadius: 18,
+    elevation: 8,
     position: 'relative',
   },
   emojiContainer: {
@@ -147,7 +166,7 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   emoticon: {
-    fontSize: FACE_SIZE * 0.55,
+    fontSize: FACE_SIZE * 0.52,
   },
   secondaryContainer: {
     position: 'absolute',
@@ -155,14 +174,22 @@ const styles = StyleSheet.create({
     right: FACE_SIZE * 0.05,
   },
   secondaryEmoticon: {
-    fontSize: FACE_SIZE * 0.2,
+    fontSize: FACE_SIZE * 0.18,
   },
   stateIndicator: {
-    marginTop: 8,
+    marginTop: 10,
+    alignItems: 'center',
+    gap: 4,
   },
   stateDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  stateLabel: {
+    fontSize: 11,
+    color: '#555',
+    fontWeight: '500',
+    textTransform: 'capitalize',
   },
 });

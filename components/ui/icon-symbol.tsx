@@ -23,19 +23,15 @@ export function IconSymbol({
       <View
         style={[
           {
-            width: size,
-            height: size,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: 'rgba(0, 255, 136, 0.1)',
-            borderRadius: size / 2,
           },
           style,
         ]}
       >
         <MaterialIcons
-          name="send"
-          size={size * 0.6}
+          name={name as any}
+          size={size}
           color={color}
         />
       </View>

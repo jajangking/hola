@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { TTSProvider, getVoicesForProvider } from '@/services/ttsConfig';
+import { TTSProvider, getVoicesForProvider, getDefaultVoiceForProvider } from '@/services/ttsConfig';
 
 export interface AppSettings {
   // TTS Settings
@@ -136,7 +136,7 @@ export function useAppSettings() {
 
   const resetTTSProvider = async () => {
     try {
-      await updateSetting('ttsProvider', 'groq');
+      await updateSetting('ttsProvider', 'native');
       return true;
     } catch (error) {
       console.error('Error resetting TTS provider:', error);

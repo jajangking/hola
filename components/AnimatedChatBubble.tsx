@@ -17,13 +17,17 @@ interface ChatBubbleProps {
 
 export function AnimatedChatBubble({ message, isUser, index }: ChatBubbleProps) {
   const opacity = useSharedValue(0);
+  const scale = useSharedValue(0.95);
 
   React.useEffect(() => {
-    opacity.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.ease) });
+    opacity.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.ease) });
+    scale.value = withTiming(1, { duration: 250, easing: Easing.out(Easing.ease) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
+    transform: [{ scale: scale.value }],
   }));
 
   return (
@@ -67,8 +71,8 @@ export function TypingIndicator({ isVisible }: TypingIndicatorProps) {
 
 const styles = StyleSheet.create({
   bubbleContainer: {
-    maxWidth: width * 0.85,
-    marginVertical: 4,
+    maxWidth: width * 0.82,
+    marginVertical: 5,
     paddingHorizontal: 16,
   },
   userBubbleContainer: {
@@ -83,23 +87,30 @@ const styles = StyleSheet.create({
     maxWidth: 60,
   },
   bubble: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 22,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
   },
   userBubble: {
     backgroundColor: '#667eea',
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: 6,
+    shadowColor: '#667eea',
+    shadowOpacity: 0.2,
   },
   botBubble: {
     backgroundColor: '#1a1a2e',
-    borderBottomLeftRadius: 4,
+    borderBottomLeftRadius: 6,
     borderWidth: 1,
-    borderColor: '#00ff88',
+    borderColor: '#2a2a4e',
   },
   typingBubble: {
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
   },
   bubbleContent: {
     flexDirection: 'row',
@@ -108,18 +119,19 @@ const styles = StyleSheet.create({
   bubbleText: {
     color: '#ffffff',
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 23,
+    letterSpacing: 0.2,
   },
   dotsContainer: {
     flexDirection: 'row',
-    gap: 4,
+    gap: 5,
     alignItems: 'center',
     justifyContent: 'center',
   },
   dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#00ff88',
   },
 });

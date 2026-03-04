@@ -15,28 +15,21 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
-        <Stack.Screen 
-          name="index" 
-          options={{ 
-            title: 'Hola AI',
-            headerStyle: {
-              backgroundColor: '#0a0a1a',
-            },
-            headerTintColor: '#00ff88',
-            headerTitleStyle: {
-              fontWeight: 'bold',
-            },
-          }} 
+        <Stack.Screen
+          name="index"
+          options={{
+            headerShown: false,
+          }}
         />
-        <Stack.Screen 
-          name="explore" 
-          options={{ 
+        <Stack.Screen
+          name="explore"
+          options={{
             title: 'Explore',
             headerStyle: {
               backgroundColor: '#0a0a1a',
             },
             headerTintColor: '#00ff88',
-          }} 
+          }}
         />
       </Stack>
       <StatusBar style="auto" />
